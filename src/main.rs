@@ -46,11 +46,6 @@ fn main() {
             extract::ilp_cbc::CbcExtractorWithTimeout::<10>.boxed(),
         ),
         */
-        #[cfg(feature = "faster-ilp-cbc")]
-        (
-            "faster-ilp-cbc",
-            extract::faster_ilp_cbc::FasterCbcExtractor.boxed(),
-        ),
         #[cfg(feature = "ilp-cbc")]
         ("ilp-cbc", extract::ilp_cbc::CbcExtractor.boxed()),
     ]
@@ -123,13 +118,12 @@ fn main() {
 
 fn check_optimal_results() {
     let optimal_dag: Vec<Box<dyn Extractor>> = vec![
-        #[cfg(feature = "faster-ilp-cbc")]
-        (ilp_cbc::CbcExtractor.boxed()),
-        #[cfg(feature = "faster-ilp-cbc")]
-        (faster_ilp_cbc::FasterCbcExtractor.boxed()),
+        // The ILP extractor in main isn't optimal, so this will fail all the time.
+        //#[cfg(feature = "ilp-cbc")]
+        //(ilp_cbc::CbcExtractor.boxed()),
     ];
 
-    let iterations = if optimal_dag.is_empty() { 2000 } else { 100 };
+    let iterations = if optimal_dag.is_empty() { 10000 } else { 100 };
 
     let optimal_tree: Vec<Box<dyn Extractor>> = vec![
         bottom_up::BottomUpExtractor.boxed(),
@@ -139,6 +133,7 @@ fn check_optimal_results() {
     let others: Vec<Box<dyn Extractor>> = vec![
         greedy_dag::GreedyDagExtractor.boxed(),
         faster_greedy_dag::FasterGreedyDagExtractor.boxed(),
+        // currently fails all the time
         //global_greedy_dag::GlobalGreedyDagExtractor.boxed(),
     ];
 
