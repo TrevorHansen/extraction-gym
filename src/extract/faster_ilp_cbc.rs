@@ -627,31 +627,32 @@ fn remove_empty_classes(vars: &mut IndexMap<ClassId, ClassILP>, config: &Config)
         let mut removed_nodes = 0;
         let fresh = IndexSet::<ClassId>::new();
 
-            let mut child_to_parents: IndexMap<ClassId, IndexSet<ClassId>> = IndexMap::new();
+        let mut child_to_parents: IndexMap<ClassId, IndexSet<ClassId>> = IndexMap::new();
 
-            for (class_id, class_vars) in vars.iter() {
-                for kids in &class_vars.childrens_classes {
-                    for child_class in kids {
-                        child_to_parents
-                            .entry(child_class.clone())
-                            .or_insert_with(IndexSet::new)
-                            .insert(class_id.clone());
-                    }
+        for (class_id, class_vars) in vars.iter() {
+            for kids in &class_vars.childrens_classes {
+                for child_class in kids {
+                    child_to_parents
+                        .entry(child_class.clone())
+                        .or_insert_with(IndexSet::new)
+                        .insert(class_id.clone());
                 }
             }
+        }
 
+        while let Some(e) = empty_classes.pop_front() {
             let parents = child_to_parents.get(&e).unwrap_or(&fresh);
             for parent in parents {
                 let mut to_remove = Vec::new();
                 for i in 0..vars[parent].childrens_classes.len() {
                     if vars[parent].childrens_classes[i].contains(&e) {
                         to_remove.push(i);
-                        removed_nodes += 1;
                     }
                 }
 
                 for i in to_remove.iter().rev() {
                     vars[parent].remove(*i);
+                    removed_nodes += 1;
                 }
 
                 if vars[parent].members() == 0 {
