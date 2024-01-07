@@ -199,7 +199,7 @@ fn extract(
 
     for _i in 1..3 {
         remove_with_loops(&mut vars, &roots, config);
-        remove_high_cost(&mut vars, initial_result_cost, config);
+        remove_high_cost(&mut vars, initial_result_cost, &roots, config);
         remove_more_expensive_nodes(&mut vars, &initial_result, egraph, config);
         remove_more_expensive_subsumed_nodes(&mut vars, config);
         remove_unreachable_classes(&mut vars, &roots, config);
@@ -619,9 +619,9 @@ fn find_extra_roots(
                     extra += 1;
                 }
             }
-            i+=1;
+            i += 1;
         }
-        
+
         log::info!("Extra roots discovered: {extra}");
     }
 }
@@ -778,20 +778,44 @@ fn pull_up_with_single_parent(
     }
 }
 
-// Remove any nodes that alone cost more than the whole best solution.
+// Remove any nodes that alone cost more than the total of a solution.
+// For example, if the lowest the sum of roots can be is 12, and we've found an approximate
+// solution already that is 15, then any non-root node that costs more than 3 can't be selected
+// in the optimal solution.
+
 fn remove_high_cost(
     vars: &mut IndexMap<ClassId, ClassILP>,
     initial_result_cost: NotNan<f64>,
+    roots: &[ClassId],
     config: &Config,
 ) {
     if config.remove_high_cost_nodes {
+        debug_assert_eq!(
+            roots.len(),
+            roots.iter().collect::<std::collections::HashSet<_>>().len(),
+            "All ClassId in roots must be unique"
+        );
+
+        let lowest_root_cost_sum: Cost = roots
+            .iter()
+            .filter_map(|root| vars[root].costs.iter().min())
+            .sum();
+
         let mut high_cost = 0;
 
-        for (_class_id, class_details) in vars.iter_mut() {
+        for (class_id, class_details) in vars.iter_mut() {
             let mut to_remove = std::collections::BTreeSet::new();
             for (node_idx, cost) in class_details.costs.iter().enumerate() {
                 // Without the allowance, this removed nodes that are needed for the optimal solution.
-                if cost > &(initial_result_cost + EPSILON_ALLOWANCE) {
+                let this_root: Cost = if roots.contains(class_id) {
+                    *class_details.costs.iter().min().unwrap()
+                } else {
+                    Cost::default()
+                };
+
+                if cost
+                    > &(initial_result_cost - lowest_root_cost_sum + this_root + EPSILON_ALLOWANCE)
+                {
                     to_remove.insert(node_idx);
                 }
             }
@@ -801,7 +825,7 @@ fn remove_high_cost(
                 high_cost += 1;
             }
         }
-        log::info!("Omitted high-cost nodes: {}", high_cost);
+        log::info!("Removed high-cost nodes: {}", high_cost);
     }
 }
 
@@ -1082,7 +1106,6 @@ fn all_disabled() -> Config {
 }
 
 const CONFIGS_TO_TEST: i64 = 150;
-const ELABORATE_TESTING: bool = false;
 
 fn test_configs(config: &Vec<Config>, log_path: impl AsRef<std::path::Path>) {
     const RANDOM_EGRAPHS_TO_TEST: i64 = if ELABORATE_TESTING {
