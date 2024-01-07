@@ -27,6 +27,7 @@ pub struct Config {
     pub move_min_cost_of_members_to_class: bool,
     pub prior_block_cycles: bool,
     pub find_extra_roots: bool,
+    pub remove_empty_classes: bool,
 }
 
 impl Config {
@@ -43,6 +44,7 @@ impl Config {
             move_min_cost_of_members_to_class: false,
             prior_block_cycles: false,
             find_extra_roots: true,
+            remove_empty_classes: true,
         }
     }
 }
@@ -206,16 +208,8 @@ fn extract(
         pull_up_with_single_parent(&mut vars, &roots, config);
         pull_up_costs(&mut vars, &roots, config);
         find_extra_roots(&mut vars, &mut roots, config);
+        remove_empty_classes(&mut vars, config);
     }
-
-    let mut empty = 0;
-    for class in vars.values() {
-        if class.members() == 0 {
-            empty += 1;
-        }
-    }
-    //All problems with empty classes finish in side the timeout - so I haven't implemented removing them yet.
-    log::info!("Empty classes: {empty}");
 
     for (classid, class) in &vars {
         if class.members() == 0 {
@@ -583,6 +577,61 @@ fn remove_unreachable_classes(
         let initial_size = vars.len();
         vars.retain(|class_id, _| reachable_classes.contains(class_id));
         log::info!("Unreachable classes: {}", initial_size - vars.len());
+    }
+}
+
+// Any node that has an empty class as a child, can't be selected, so remove the node,
+// if that makes another empty class, then remove its parents
+fn remove_empty_classes(vars: &mut IndexMap<ClassId, ClassILP>, config: &Config) {
+    if config.remove_empty_classes {
+        let mut empty_classes: std::collections::VecDeque<ClassId> = Default::default();
+        for (classid, detail) in vars.iter() {
+            if detail.members() == 0 {
+                empty_classes.push_back(classid.clone());
+            }
+        }
+
+        let mut removed_nodes = 0;
+        let fresh = IndexSet::<ClassId>::new();
+
+        while let Some(e) = empty_classes.pop_front() {
+            let mut child_to_parents: IndexMap<ClassId, IndexSet<ClassId>> = IndexMap::new();
+
+            for (class_id, class_vars) in vars.iter() {
+                for kids in &class_vars.childrens_classes {
+                    for child_class in kids {
+                        child_to_parents
+                            .entry(child_class.clone())
+                            .or_insert_with(IndexSet::new)
+                            .insert(class_id.clone());
+                    }
+                }
+            }
+
+            let parents = child_to_parents.get(&e).unwrap_or(&fresh);
+            for parent in parents {
+                let mut to_remove = Vec::new();
+                for i in 0..vars[parent].childrens_classes.len() {
+                    if vars[parent].childrens_classes[i].contains(&e) {
+                        to_remove.push(i);
+                        removed_nodes += 1;
+                    }
+                }
+
+                for i in to_remove.iter().rev() {
+                    vars[parent].remove(*i);
+                }
+
+                if vars[parent].members() == 0 {
+                    empty_classes.push_back(parent.clone());
+                }
+            }
+        }
+
+        log::info!(
+            "Nodes removed that point to empty classes: {}",
+            removed_nodes
+        );
     }
 }
 
@@ -1086,6 +1135,7 @@ pub fn generate_random_config() -> Config {
         move_min_cost_of_members_to_class: rng.gen(),
         prior_block_cycles: rng.gen(),
         find_extra_roots: rng.gen(),
+        remove_empty_classes: rng.gen(),
     }
 }
 
@@ -1102,6 +1152,7 @@ fn all_disabled() -> Config {
         move_min_cost_of_members_to_class: false,
         prior_block_cycles: false,
         find_extra_roots: false,
+        remove_empty_classes: false,
     };
 }
 
