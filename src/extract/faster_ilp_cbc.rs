@@ -26,6 +26,7 @@ pub struct Config {
     pub take_intersection_of_children_in_class: bool,
     pub move_min_cost_of_members_to_class: bool,
     pub prior_block_cycles: bool,
+    pub find_extra_roots: bool,
 }
 
 impl Config {
@@ -41,6 +42,7 @@ impl Config {
             take_intersection_of_children_in_class: true,
             move_min_cost_of_members_to_class: false,
             prior_block_cycles: false,
+            find_extra_roots: true,
         }
     }
 }
@@ -146,7 +148,17 @@ impl Extractor for FasterCbcExtractor {
     }
 }
 
-fn extract(egraph: &EGraph, roots: &[ClassId], config: &Config, timeout: u32) -> ExtractionResult {
+fn extract(
+    egraph: &EGraph,
+    roots_slice: &[ClassId],
+    config: &Config,
+    timeout: u32,
+) -> ExtractionResult {
+    // todo from now on we don't use roots_slice - be good to prevent using it any more.
+    let mut roots = roots_slice.to_vec();
+    roots.sort();
+    roots.dedup();
+
     let mut model = Model::default();
 
     //silence verbose stdout output
@@ -182,17 +194,18 @@ fn extract(egraph: &EGraph, roots: &[ClassId], config: &Config, timeout: u32) ->
         })
         .collect();
 
-    let initial_result = super::faster_greedy_dag::FasterGreedyDagExtractor.extract(egraph, roots);
-    let initial_result_cost = initial_result.dag_cost(egraph, roots);
+    let initial_result = super::faster_greedy_dag::FasterGreedyDagExtractor.extract(egraph, &roots);
+    let initial_result_cost = initial_result.dag_cost(egraph, &roots);
 
     for _i in 1..3 {
-        remove_with_loops(&mut vars, roots, config);
+        remove_with_loops(&mut vars, &roots, config);
         remove_high_cost(&mut vars, initial_result_cost, config);
         remove_more_expensive_nodes(&mut vars, &initial_result, egraph, config);
         remove_more_expensive_subsumed_nodes(&mut vars, config);
-        remove_unreachable_classes(&mut vars, roots, config);
-        pull_up_with_single_parent(&mut vars, roots, config);
-        pull_up_costs(&mut vars, roots, config);
+        remove_unreachable_classes(&mut vars, &roots, config);
+        pull_up_with_single_parent(&mut vars, &roots, config);
+        pull_up_costs(&mut vars, &roots, config);
+        find_extra_roots(&mut vars, &mut roots, config);
     }
 
     let mut empty = 0;
@@ -273,7 +286,7 @@ fn extract(egraph: &EGraph, roots: &[ClassId], config: &Config, timeout: u32) ->
         }
     }
 
-    for root in roots {
+    for root in &roots {
         model.set_col_lower(vars[root].active, 1.0);
     }
 
@@ -402,15 +415,15 @@ fn extract(egraph: &EGraph, roots: &[ClassId], config: &Config, timeout: u32) ->
             }
         }
 
-        let cycles = find_cycles_in_result(&result, &vars, roots);
+        let cycles = find_cycles_in_result(&result, &vars, &roots);
         if cycles.is_empty() {
             log::info!("Cost of solution {cost}");
             log::info!("Initial result {}", initial_result_cost.into_inner());
-            log::info!("Cost of extraction {}", result.dag_cost(egraph, roots));
+            log::info!("Cost of extraction {}", result.dag_cost(egraph, &roots));
             log::info!("Cost from solver {}", solution.raw().obj_value());
 
             assert!(cost <= initial_result_cost.into_inner() + EPSILON_ALLOWANCE);
-            assert!((result.dag_cost(egraph, roots) - cost).abs() < EPSILON_ALLOWANCE);
+            assert!((result.dag_cost(egraph, &roots) - cost).abs() < EPSILON_ALLOWANCE);
             assert!((cost - solution.raw().obj_value()).abs() < EPSILON_ALLOWANCE);
 
             return result;
@@ -570,6 +583,46 @@ fn remove_unreachable_classes(
         let initial_size = vars.len();
         vars.retain(|class_id, _| reachable_classes.contains(class_id));
         log::info!("Unreachable classes: {}", initial_size - vars.len());
+    }
+}
+
+// Any class that is a child of each node in a root, is also a root.
+fn find_extra_roots(
+    vars: &mut IndexMap<ClassId, ClassILP>,
+    roots: &mut Vec<ClassId>,
+    config: &Config,
+) {
+    if config.find_extra_roots {
+        let mut extra = 0;
+        let mut i = 0;
+        // newly added roots will also be processed in one pass through.
+        while i < roots.len() {
+            let r = roots[i].clone();
+
+            let details = vars.get(&r).unwrap();
+            if details.childrens_classes.len() == 0 {
+                continue;
+            }
+
+            let mut intersection = details.childrens_classes[0].clone();
+
+            for childrens_classes in &details.childrens_classes[1..] {
+                intersection = intersection
+                    .intersection(childrens_classes)
+                    .cloned()
+                    .collect();
+            }
+
+            for r in &intersection {
+                if !roots.contains(r) {
+                    roots.push(r.clone());
+                    extra += 1;
+                }
+            }
+            i+=1;
+        }
+        
+        log::info!("Extra roots discovered: {extra}");
     }
 }
 
@@ -1008,6 +1061,7 @@ pub fn generate_random_config() -> Config {
         take_intersection_of_children_in_class: rng.gen(),
         move_min_cost_of_members_to_class: rng.gen(),
         prior_block_cycles: rng.gen(),
+        find_extra_roots: rng.gen(),
     }
 }
 
@@ -1023,6 +1077,7 @@ fn all_disabled() -> Config {
         take_intersection_of_children_in_class: false,
         move_min_cost_of_members_to_class: false,
         prior_block_cycles: false,
+        find_extra_roots: false,
     };
 }
 
