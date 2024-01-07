@@ -11,9 +11,24 @@ pub mod global_greedy_dag;
 pub mod greedy_dag;
 #[cfg(feature = "ilp-cbc")]
 pub mod ilp_cbc;
+#[cfg(feature = "ilp-cbc")]
+pub mod faster_ilp_cbc;
 
 // Allowance for floating point values to be considered equal
 pub const EPSILON_ALLOWANCE: f64 = 0.00001;
+
+// I want this to write to a tempfs file system, you'll
+// want to change the path in test_save_path to something
+// that works for you.
+pub const ELABORATE_TESTING: bool = false;
+
+pub fn test_save_path(name: &str) -> String {
+    return if ELABORATE_TESTING {
+        format!("/dev/shm/{}_egraph.json", name)
+    } else {
+        "".to_string()
+    };
+}
 
 pub trait Extractor: Sync {
     fn extract(&self, egraph: &EGraph, roots: &[ClassId]) -> ExtractionResult;
