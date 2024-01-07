@@ -163,6 +163,8 @@ fn extract(
 
     let mut model = Model::default();
 
+    let simp_start_time = std::time::Instant::now();
+
     //silence verbose stdout output
     model.set_parameter("loglevel", "0");
 
@@ -330,6 +332,11 @@ fn extract(
     if false {
         return initial_result;
     }
+
+    log::info!(
+        "Time spent before solving: {}ms",
+        simp_start_time.elapsed().as_millis()
+    );
 
     let start_time = SystemTime::now();
 
