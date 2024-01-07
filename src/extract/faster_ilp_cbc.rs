@@ -28,7 +28,8 @@ pub struct Config {
     pub prior_block_cycles: bool,
     pub find_extra_roots: bool,
     pub remove_empty_classes: bool,
-}
+    pub return_improved_on_timeout: bool,
+    }
 
 impl Config {
     pub const fn default() -> Self {
@@ -45,6 +46,7 @@ impl Config {
             prior_block_cycles: false,
             find_extra_roots: true,
             remove_empty_classes: true,
+            return_improved_on_timeout:true,
         }
     }
 }
@@ -364,25 +366,20 @@ fn extract(
             return ExtractionResult::default();
         }
 
+        let stopped_without_finishing = solution.raw().status() != coin_cbc::raw::Status::Finished;
+
         // Doesn't make allowance for getting cycles.
-        /*
-        if solution.raw().status() != coin_cbc::raw::Status::Finished {
+        if stopped_without_finishing {
             log::info!("CBC stopped before finishing");
 
-            if solution.raw().obj_value() > initial_result_cost.into_inner() {
+            if !config.return_improved_on_timeout || solution.raw().obj_value() > initial_result_cost.into_inner() {
                 log::info!(
-                    "Unfinished CBC solution is worse than greedy dag: {} > {}",
+                    "Unfinished CBC solution returned, solver: {}, initial: {}",
                     solution.raw().obj_value(),
                     initial_result_cost
                 );
                 return initial_result;
             }
-        }
-        */
-
-        if solution.raw().status() != coin_cbc::raw::Status::Finished {
-            log::info!("CBC stopped before finishing");
-            return initial_result;
         }
 
         let mut result = ExtractionResult::default();
@@ -417,12 +414,41 @@ fn extract(
         }
 
         let cycles = find_cycles_in_result(&result, &vars, &roots);
-        if cycles.is_empty() {
-            log::info!("Cost of solution {cost}");
-            log::info!("Initial result {}", initial_result_cost.into_inner());
-            log::info!("Cost of extraction {}", result.dag_cost(egraph, &roots));
-            log::info!("Cost from solver {}", solution.raw().obj_value());
 
+        log::info!("Cost of solution {cost}");
+        log::info!("Initial result {}", initial_result_cost.into_inner());
+        log::info!("Cost of extraction {}", result.dag_cost(egraph, &roots));
+        log::info!("Cost from solver {}", solution.raw().obj_value());
+
+        if stopped_without_finishing
+        {
+            log::info!("Timed out");
+            if cycles.is_empty() {
+                // The reported cost of the solution sometimes differs to the dag cost, so we're 
+                // a bit carefu..
+                let extraction_dag_cost = result.dag_cost(egraph, &roots);
+                
+                // Not sure if this will ever fail..
+                result.check(egraph);
+                if extraction_dag_cost < initial_result_cost
+                {
+                    log::info!("Returning result of incomplete search saving: {}", initial_result_cost - extraction_dag_cost);
+                    return result;
+                }
+                else {
+
+                    return initial_result;
+                }
+            }
+            else
+            {
+                log::info!("Found cycle in solution, but solver timed out");
+                return initial_result;
+            }
+        }
+
+        if cycles.is_empty() {
+        
             assert!(cost <= initial_result_cost.into_inner() + EPSILON_ALLOWANCE);
             assert!((result.dag_cost(egraph, &roots) - cost).abs() < EPSILON_ALLOWANCE);
             assert!((cost - solution.raw().obj_value()).abs() < EPSILON_ALLOWANCE);
@@ -1142,6 +1168,7 @@ pub fn generate_random_config() -> Config {
         prior_block_cycles: rng.gen(),
         find_extra_roots: rng.gen(),
         remove_empty_classes: rng.gen(),
+        return_improved_on_timeout: rng.gen(),
     }
 }
 
@@ -1159,6 +1186,7 @@ fn all_disabled() -> Config {
         prior_block_cycles: false,
         find_extra_roots: false,
         remove_empty_classes: false,
+        return_improved_on_timeout: false,
     };
 }
 
