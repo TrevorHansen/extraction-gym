@@ -157,7 +157,10 @@ fn main() {
 * Checks that the extractions are valid.
 */
 
-fn check_optimal_results<I: Iterator<Item = EGraph>>(egraphs: I) {
+fn check_optimal_results<I: Iterator<Item = EGraph>>(
+    egraphs: I,
+    log_path: impl AsRef<std::path::Path>,
+) {
     let mut optimal_dag: Vec<Box<dyn Extractor>> = Default::default();
     let mut optimal_tree: Vec<Box<dyn Extractor>> = Default::default();
     let mut others: Vec<Box<dyn Extractor>> = Default::default();
@@ -171,6 +174,10 @@ fn check_optimal_results<I: Iterator<Item = EGraph>>(egraphs: I) {
     }
 
     for egraph in egraphs {
+        if !log_path.as_ref().to_str().unwrap_or("").is_empty() {
+            egraph.to_json_file(&log_path).unwrap();
+        }
+
         let mut optimal_dag_cost: Option<Cost> = None;
 
         for e in &optimal_dag {
@@ -230,6 +237,9 @@ fn check_optimal_results<I: Iterator<Item = EGraph>>(egraphs: I) {
                 assert!(optimal_dag_cost.unwrap() <= dag_cost + EPSILON_ALLOWANCE);
             }
         }
+        if !log_path.as_ref().to_str().unwrap_or("").is_empty() {
+            std::fs::remove_file(&log_path);
+        }
     }
 }
 
@@ -247,7 +257,7 @@ fn run_on_fuzz_egraphs() {
         })
         .map(|e| e.path().to_string_lossy().into_owned())
         .map(|e| EGraph::from_json_file(e).unwrap());
-    check_optimal_results(egraphs);
+    check_optimal_results(egraphs, "");
 }
 
 #[test]
@@ -261,13 +271,24 @@ macro_rules! create_optimal_check_tests {
         $(
             #[test]
             fn $name() {
-                let optimal_dag_found = extractors().into_iter().any(|(_, ed)| ed.optimal == Optimal::DAG);
-                let iterations = if optimal_dag_found { 100 } else { 10000 };
-                let egraphs = (0..iterations).map(|_| generate_random_egraph());
-                check_optimal_results(egraphs);
+                let mut iterations = 2000;
+                if ELABORATE_TESTING
+                {
+                    iterations *=500;
+                }
+                if extractors().into_iter().any(|(_, ed)| ed.optimal == Optimal::DAG)
+                {
+                     iterations /= 50;
+                }
+                println!("Iterations chosen {iterations}");
+
+                check_optimal_results((0..iterations).map(|_| generate_random_egraph()), test_save_path(stringify!($name)));
             }
         )*
     }
 }
 
-create_optimal_check_tests!(check0, check1, check2, check3, check4, check5, check6, check7);
+// So the test runner uses more of my cores.
+create_optimal_check_tests!(
+    check0, check1, check2, check3, check4, check5, check6, check7, check8, check9, check10
+);
