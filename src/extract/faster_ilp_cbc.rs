@@ -601,7 +601,6 @@ fn remove_empty_classes(vars: &mut IndexMap<ClassId, ClassILP>, config: &Config)
         let mut removed_nodes = 0;
         let fresh = IndexSet::<ClassId>::new();
 
-        while let Some(e) = empty_classes.pop_front() {
             let mut child_to_parents: IndexMap<ClassId, IndexSet<ClassId>> = IndexMap::new();
 
             for (class_id, class_vars) in vars.iter() {
