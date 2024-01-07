@@ -15,10 +15,16 @@ use std::path::PathBuf;
 pub type Cost = NotNan<f64>;
 pub const INFINITY: Cost = unsafe { NotNan::new_unchecked(std::f64::INFINITY) };
 
+#[derive(PartialEq, Eq)]
+enum Optimal {
+    Tree,
+    DAG,
+    Neither,
+}
+
 struct ExtractorDetail {
     extractor: Box<dyn Extractor>,
-    is_dag_optimal: bool,
-    is_tree_optimal: bool,
+    optimal: Optimal,
     use_for_bench: bool,
 }
 
@@ -28,8 +34,7 @@ fn extractors() -> IndexMap<&'static str, ExtractorDetail> {
             "bottom-up",
             ExtractorDetail {
                 extractor: extract::bottom_up::BottomUpExtractor.boxed(),
-                is_dag_optimal: false,
-                is_tree_optimal: true,
+                optimal: Optimal::Tree,
                 use_for_bench: true,
             },
         ),
@@ -37,8 +42,7 @@ fn extractors() -> IndexMap<&'static str, ExtractorDetail> {
             "faster-bottom-up",
             ExtractorDetail {
                 extractor: extract::faster_bottom_up::FasterBottomUpExtractor.boxed(),
-                is_dag_optimal: false,
-                is_tree_optimal: true,
+                optimal: Optimal::Tree,
                 use_for_bench: true,
             },
         ),
@@ -46,8 +50,7 @@ fn extractors() -> IndexMap<&'static str, ExtractorDetail> {
             "faster-greedy-dag",
             ExtractorDetail {
                 extractor: extract::faster_greedy_dag::FasterGreedyDagExtractor.boxed(),
-                is_dag_optimal: false,
-                is_tree_optimal: false,
+                optimal: Optimal::Neither,
                 use_for_bench: true,
             },
         ),*/
@@ -63,8 +66,7 @@ fn extractors() -> IndexMap<&'static str, ExtractorDetail> {
         ),
             ExtractorDetail {
                 extractor: extract::global_greedy_dag::GlobalGreedyDagExtractor.boxed(),
-                is_dag_optimal: false,
-                is_tree_optimal: false,
+                optimal: Optimal::Neither,
                 use_for_bench: true,
             },
         ),
@@ -74,8 +76,7 @@ fn extractors() -> IndexMap<&'static str, ExtractorDetail> {
             "ilp-cbc-timeout",
             ExtractorDetail {
                 extractor: extract::ilp_cbc::CbcExtractorWithTimeout::<10>.boxed(),
-                is_dag_optimal: false,
-                is_tree_optimal: false,
+                optimal: Optimal::DAG,
                 use_for_bench: true,
             },
         ),
@@ -84,8 +85,7 @@ fn extractors() -> IndexMap<&'static str, ExtractorDetail> {
             "ilp-cbc",
             ExtractorDetail {
                 extractor: extract::ilp_cbc::CbcExtractor.boxed(),
-                is_dag_optimal: true,
-                is_tree_optimal: false,
+                optimal: Optimal::DAG,
                 use_for_bench: false, // takes >10 hours sometimes
             },
         ),
@@ -166,28 +166,19 @@ fn main() {
 */
 
 fn check_optimal_results<I: Iterator<Item = EGraph>>(egraphs: I) {
-    let optimal_dag: Vec<Box<dyn Extractor>> = extractors()
-        .into_iter()
-        .filter(|(_, ed)| ed.is_dag_optimal)
-        .map(|(_, ed)| ed.extractor)
-        .collect();
+    let mut optimal_dag: Vec<Box<dyn Extractor>> = Default::default();
+    let mut optimal_tree: Vec<Box<dyn Extractor>> = Default::default();
+    let mut others: Vec<Box<dyn Extractor>> = Default::default();
 
-    let optimal_tree: Vec<Box<dyn Extractor>> = extractors()
-        .into_iter()
-        .filter(|(_, ed)| ed.is_tree_optimal)
-        .map(|(_, ed)| ed.extractor)
-        .collect();
+    for (_, ed) in extractors().into_iter() {
+        match ed.optimal {
+            Optimal::DAG => optimal_dag.push(ed.extractor),
+            Optimal::Tree => optimal_tree.push(ed.extractor),
+            Optimal::Neither => others.push(ed.extractor),
+        }
+    }
 
-    let others: Vec<Box<dyn Extractor>> = extractors()
-        .into_iter()
-        .filter(|(_, ed)| !ed.is_dag_optimal || !ed.is_tree_optimal)
-        .map(|(_, ed)| ed.extractor)
-        .collect();
-
-    let mut count = 0;
     for egraph in egraphs {
-        count += 1;
-
         let mut optimal_dag_cost: Option<Cost> = None;
 
         for e in &optimal_dag {
@@ -278,7 +269,7 @@ macro_rules! create_optimal_check_tests {
         $(
             #[test]
             fn $name() {
-                let optimal_dag_found = extractors().into_iter().any(|(_, ed)| ed.is_dag_optimal);
+                let optimal_dag_found = extractors().into_iter().any(|(_, ed)| ed.optimal == Optimal::DAG);
                 let iterations = if optimal_dag_found { 100 } else { 10000 };
                 let egraphs = (0..iterations).map(|_| generate_random_egraph());
                 check_optimal_results(egraphs);
