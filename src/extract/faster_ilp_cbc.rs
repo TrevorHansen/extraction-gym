@@ -45,7 +45,7 @@ impl Config {
             move_min_cost_of_members_to_class: false,
             prior_block_cycles: false,
             find_extra_roots: true,
-            remove_empty_classes: false,
+            remove_empty_classes:true,
             return_improved_on_timeout: true,
         }
     }
@@ -638,7 +638,13 @@ fn remove_empty_classes(vars: &mut IndexMap<ClassId, ClassILP>, config: &Config)
             }
         }
 
+        let mut done = FxHashSet::<ClassId>::default();
+
         while let Some(e) = empty_classes.pop_front() {
+            if !done.insert(e.clone())
+            {
+                continue;
+            }
             let parents = child_to_parents.get(&e).unwrap_or(&fresh);
             for parent in parents {
                 let mut to_remove = Vec::new();
