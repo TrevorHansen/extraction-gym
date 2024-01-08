@@ -45,7 +45,7 @@ impl Config {
             move_min_cost_of_members_to_class: false,
             prior_block_cycles: false,
             find_extra_roots: true,
-            remove_empty_classes: true,
+            remove_empty_classes: false,
             return_improved_on_timeout: true,
         }
     }
@@ -991,13 +991,24 @@ fn block_cycle(model: &mut Model, cycle: &Vec<ClassId>, vars: &IndexMap<ClassId,
         let current_class_id = &cycle[i];
         let next_class_id = &cycle[(i + 1) % cycle.len()];
 
-        let blocking_var = model.add_binary();
-        blocking.push(blocking_var);
+        let mut this_level = Vec::default();
         for node in &vars[current_class_id].as_nodes() {
             if node.children_classes.contains(next_class_id) {
+                this_level.push(node.variable);
+            }
+        }
+
+        assert!(!this_level.is_empty());
+
+        if this_level.len() == 1 {
+            blocking.push(this_level[0]);
+        } else {
+            let blocking_var = model.add_binary();
+            blocking.push(blocking_var);
+            for n in this_level {
                 let row = model.add_row();
                 model.set_row_upper(row, 0.0);
-                model.set_weight(row, node.variable, 1.0);
+                model.set_weight(row, n, 1.0);
                 model.set_weight(row, blocking_var, -1.0);
             }
         }
