@@ -18,6 +18,21 @@ def load_jsons(files):
             raise e
     return js
 
+def getXYSequence(js, e0, reference, ref_data):
+
+    e0_list = []
+    e0_data = [j for j in js if j["extractor"] == e0]
+
+    for j in e0_data:
+        jv = j;
+        jv["improvement"] = ref_data[j["name"]]["dag"]- j["dag"] 
+        e0_list.append(jv)
+
+    e0_value = []
+    for jv in e0_list:
+        e0_value.append([jv["micros"]/1000000, jv["improvement"]]);
+
+    return e0_value;
 
 # Returns a sequence of [time, improvement] pairs for the given extractor.
 # The improvement is the total improvement in dag-cost compared to the 
@@ -33,7 +48,8 @@ def getSequence(js, e0, reference, ref_data):
         e0_cumulative += j["micros"]
         jv = j;
 
-        jv["improvement"] = ref_data[j["name"]]["dag"]- j["dag"] 
+        reference = ref_data[j["name"]]["dag"]
+        jv["improvement"] =  (100* (reference - j["dag"]) / reference) / len(e0_data);
         e0_list.append(jv)
 
     e0_cumulative = int(e0_cumulative / (1000 * 1000))
@@ -71,14 +87,25 @@ def getSequence(js, e0, reference, ref_data):
             else:
                 break
 
-        e0_value.append([i, saving]);
+        e0_value.append([i, saving, finished]);
 
     return e0_value
 
-#Assumes each extractor is run on the all the egraph benchmarks at the same time.
-#So given 500 egraphs, each will receive 1/500th of a second of that first second's
-#CPU time. Say 10 finish in less than 1/500th of a second, then for the 2nd second
-#of CPU time, each egraph will get 1/490th of a second of CPU time, and so on.
+# This assumes an extractor is run on the all the egraph benchmarks at the same time.
+# So given 500 egraphs, each will receive 1/500th of a second of that first second's
+# CPU time. Say 10 egraphs finish processing with their extractor with less than 
+# 1/500th of a second's CPU time, i.e. they have a runtime of less than 2ms. Then 
+# for the 2nd second of CPU time, each egraph will get 1/490th of a second of CPU time.
+# 
+# Continuing the example, if those 10 egraphs which were processed in the first 1/500th
+# of a second, each improved on the cost versus the reference implementation by 10%, 
+# then the graph will plot an improvemement of 1/50th of 10%, that is 0.2% at 1 second.
+# 
+# At 2 seconds, the improvement will be the sum of the percentage improvement of all 
+# the extractors which finished in less than 1/500th + 1/490th of a second, that is
+# that finished with a total runtime of less than 4.04ms.
+#
+# This will continue until the timeout on the extractor is reached.
 def graph(js):
     reference = "faster-greedy-dag"
     if not any(j["extractor"] == reference for j in js):
@@ -109,8 +136,8 @@ def graph(js):
         y_values = [i[1] for i in values]
         plt.plot(x_values, y_values, label=s)
 
-    plt.xlabel('time (s)')
-    plt.ylabel('dag-cost saving')
+    plt.xlabel('Cumulative time (s)')
+    plt.ylabel('Cumulative percentage improvement in DAG cost')
     plt.legend()
     plt.title('Improvement of extractors compared to ' + reference)
     plt.savefig('dag_cost_improvement.svg')
