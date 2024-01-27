@@ -357,6 +357,8 @@ fn extract(
         set_initial_solution(&vars, &mut model, &initial_result);
     }
 
+    prior_block(&mut model, &vars, config);
+
     if false {
         return initial_result;
     }
@@ -479,6 +481,8 @@ fn extract(
 
             return result;
         } else {
+            assert!(!config.prior_block_cycles);
+            
             log::info!("Refining by blocking cycles: {}", cycles.len());
             for c in &cycles {
                 block_cycle(&mut model, c, &vars);
@@ -1194,6 +1198,71 @@ fn cycle_dfs(
         }
     }
 }
+
+/*
+Blocks all the cycles by constraining levels associated with classes.
+
+There is an integer variable for each class. If there is an active edge connecting two classes,
+then the level of the source class needs to be less than the level of the destination class.
+
+A nice thing about this is that later on we can read out feasible solutions from
+the ILP solver even on timeout. Currently all the work is thrown away on timeout.
+
+*/
+
+fn prior_block(model: &mut Model, vars: &IndexMap<ClassId, ClassILP>, config: &Config) {
+    if config.prior_block_cycles {
+        let mut levels: IndexMap<ClassId, Col> = Default::default();
+        for c in vars.keys() {
+            levels.insert(c.clone(), model.add_integer());
+        }
+
+        // If n.variable is true, opposite_col will be false and vice versa.
+        let mut opposite: IndexMap<Col, Col> = Default::default();
+        for c in vars.values() {
+            for n in c.as_nodes() {
+                let opposite_col = model.add_binary();
+                opposite.insert(n.variable, opposite_col);
+                let row = model.add_row();
+                model.set_row_equal(row, 1.0);
+                model.set_weight(row, opposite_col, 1.0);
+                model.set_weight(row, n.variable, 1.0);
+            }
+        }
+
+        for (class_id, c) in vars {
+            model.set_col_lower(*levels.get(class_id).unwrap(), 0.0);
+            model.set_col_upper(*levels.get(class_id).unwrap(), vars.len() as f64);
+
+            for n in c.as_nodes() {
+                if n.children_classes.contains(class_id) {
+                    // Self loop. disable this node.
+                    let row = model.add_row();
+                    model.set_weight(row, n.variable, 1.0);
+                    model.set_row_equal(row, 0.0);
+                    continue;
+                }
+
+                for cc in n.children_classes {
+                    assert!(*levels.get(class_id).unwrap() != *levels.get(&cc).unwrap());
+
+                    let row = model.add_row();
+                    model.set_row_upper(row, -1.0);
+                    model.set_weight(row, *levels.get(class_id).unwrap(), 1.0);
+                    model.set_weight(row, *levels.get(&cc).unwrap(), -1.0);
+
+                    // If n.variable is 0, then disable the contraint.
+                    model.set_weight(
+                        row,
+                        *opposite.get(&n.variable).unwrap(),
+                        -((vars.len() + 1) as f64),
+                    );
+                }
+            }
+        }
+    }
+}
+
 
 mod test {
     use super::*;
