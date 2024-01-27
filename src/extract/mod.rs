@@ -306,8 +306,8 @@ pub fn generate_random_egraph() -> EGraph {
 
 pub fn generate_random_egraph_tree() -> EGraph {
     let mut rng = rand::thread_rng();
-    let core_node_count = rng.gen_range(1..10) as usize;
-    let mut nodes: Vec<Node> = Vec::with_capacity(2*core_node_count);
+    let core_node_count = rng.gen_range(1..1000) as usize;
+    let mut nodes: Vec<Node> = Vec::with_capacity(2 * core_node_count);
     let mut eclass = 0;
     let mut node_id = 0;
 
@@ -319,11 +319,12 @@ pub fn generate_random_egraph_tree() -> EGraph {
             eclass: eclass.to_string().clone().into(),
             cost: generate_random_not_nan() * 100.0,
         });
-        eclass+=1;
-        node_id+=1;
+        eclass += 1;
+        node_id += 1;
     }
 
-    let mut working: std::collections::VecDeque<_> = std::collections::VecDeque::from(nodes.clone());
+    let mut working: std::collections::VecDeque<_> =
+        std::collections::VecDeque::from(nodes.clone());
 
     while working.len() > 1 {
         // Select some number of them off the back.
@@ -335,8 +336,7 @@ pub fn generate_random_egraph_tree() -> EGraph {
 
         if working.is_empty() || rng.gen_bool(0.2) {
             eclass += 1;
-        }
-        else {
+        } else {
             working.pop_back();
         }
 
@@ -347,9 +347,8 @@ pub fn generate_random_egraph_tree() -> EGraph {
             cost: generate_random_not_nan() * 100.0,
         });
 
-        node_id+=1;
+        node_id += 1;
         working.push_back(nodes.last().unwrap().clone());
-
     }
 
     let mut egraph = EGraph::default();
@@ -359,8 +358,9 @@ pub fn generate_random_egraph_tree() -> EGraph {
     }
 
     // Set root
-    egraph.root_eclasses.push(working.pop_back().unwrap().eclass.clone());
-    
-    return egraph;
-    }
+    egraph
+        .root_eclasses
+        .push(working.pop_back().unwrap().eclass.clone());
 
+    return egraph;
+}
