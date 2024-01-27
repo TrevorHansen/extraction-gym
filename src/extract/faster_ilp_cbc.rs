@@ -45,11 +45,17 @@ impl Config {
             move_min_cost_of_members_to_class: false,
             prior_block_cycles: false,
             find_extra_roots: true,
-            remove_empty_classes:true,
+            remove_empty_classes: true,
             return_improved_on_timeout: true,
         }
     }
 }
+
+#[derive(Default, Debug)]
+struct Stats {
+    classes_before_solving: usize,
+}
+
 
 struct NodeILP {
     variable: Col,
@@ -140,7 +146,7 @@ impl<const TIMEOUT_IN_SECONDS: u32> Extractor
     for FasterCbcExtractorWithTimeout<TIMEOUT_IN_SECONDS>
 {
     fn extract(&self, egraph: &EGraph, roots: &[ClassId]) -> ExtractionResult {
-        return extract(egraph, roots, &Config::default(), TIMEOUT_IN_SECONDS);
+        return extract(egraph, roots, &Config::default(), TIMEOUT_IN_SECONDS, &mut Stats::default());
     }
 }
 
@@ -148,7 +154,7 @@ pub struct FasterCbcExtractor;
 
 impl Extractor for FasterCbcExtractor {
     fn extract(&self, egraph: &EGraph, roots: &[ClassId]) -> ExtractionResult {
-        return extract(egraph, roots, &Config::default(), std::u32::MAX);
+        return extract(egraph, roots, &Config::default(), std::u32::MAX, &mut Stats::default());
     }
 }
 
@@ -157,6 +163,7 @@ fn extract(
     roots_slice: &[ClassId],
     config: &Config,
     timeout: u32,
+    stats: &mut Stats,
 ) -> ExtractionResult {
     // todo from now on we don't use roots_slice - be good to prevent using it any more.
     let mut roots = roots_slice.to_vec();
@@ -316,6 +323,7 @@ fn extract(
         for (&node_active, &node_cost) in c_var.variables.iter().zip(c_var.costs.iter()) {
             if *node_cost - min_cost != 0.0 {
                 model.set_obj_coeff(node_active, *node_cost - min_cost);
+                objective_fn_terms += 1;
             }
         }
     }
@@ -341,6 +349,7 @@ fn extract(
     );
 
     let start_time = SystemTime::now();
+    stats.classes_before_solving = vars.len();
 
     loop {
         // Set the solver limit based on how long has passed already.
@@ -565,7 +574,7 @@ fn remove_more_expensive_subsumed_nodes(vars: &mut IndexMap<ClassId, ClassILP>, 
         let mut removed = 0;
         for class in vars.values_mut() {
             let mut children = class.as_nodes();
-            children.sort_by_key(|e| e.children_classes.len());
+children.sort_by_key(|e| e.children_classes.len());
 
             let mut to_remove: IndexSet<NodeId> = Default::default();
 
@@ -583,10 +592,10 @@ fn remove_more_expensive_subsumed_nodes(vars: &mut IndexMap<ClassId, ClassILP>, 
                         && node_a.children_classes.is_subset(&node_b.children_classes)
                     {
                         to_remove.insert(node_b.member.clone());
-                    }
+                                            }
                 }
-            }
-            removed += to_remove
+                            }
+removed += to_remove
                 .iter()
                 .map(|node_id| class.remove_node(node_id))
                 .count();
@@ -641,8 +650,7 @@ fn remove_empty_classes(vars: &mut IndexMap<ClassId, ClassILP>, config: &Config)
         let mut done = FxHashSet::<ClassId>::default();
 
         while let Some(e) = empty_classes.pop_front() {
-            if !done.insert(e.clone())
-            {
+            if !done.insert(e.clone()) {
                 continue;
             }
             let parents = child_to_parents.get(&e).unwrap_or(&fresh);
@@ -805,10 +813,12 @@ fn pull_up_with_single_parent(
                 }
 
                 if vars[child].members.len() != 1 {
+                    // Will potentially create an exponential number of members in the parent if called multiple times.
                     continue;
                 }
 
                 if vars[child].childrens_classes.first().unwrap().is_empty() {
+                    // Nothing to pull up.
                     continue;
                 }
 
@@ -1224,7 +1234,7 @@ fn test_configs(config: &Vec<Config>, log_path: impl AsRef<std::path::Path>) {
 
         let mut results: Option<Cost> = None;
         for c in config {
-            let extraction = extract(&egraph, &egraph.root_eclasses, c, u32::MAX);
+            let extraction = extract(&egraph, &egraph.root_eclasses, c, u32::MAX, &mut Stats::default());
             extraction.check(&egraph);
             let dag_cost = extraction.dag_cost(&egraph, &egraph.root_eclasses);
             if results.is_some() {
@@ -1259,3 +1269,42 @@ create_tests!(
     random0, random1, random2, random3, random4, random5, random6, random7, random8, random9,
     random10
 );
+
+#[test]
+fn test_tree_costs()
+{
+    env_logger::init();
+
+    for _ in 0..100 {
+        let egraph = generate_random_egraph_tree();
+
+        let extraction = extract(&egraph, &egraph.root_eclasses, &Config::default(), u32::MAX, &mut Stats::default());
+        extraction.check(&egraph);
+        // Tree and DAG cost should be the same, not possible to duplicate nodes.
+        assert!(
+            (extraction.dag_cost(&egraph, &egraph.root_eclasses).into_inner() - extraction.tree_cost(&egraph, &egraph.root_eclasses).into_inner()).abs()
+                < EPSILON_ALLOWANCE
+        );
+    }
+}
+
+
+fn test_tree_reduces_to_single_node()
+{
+    env_logger::init();
+
+    for _ in 0..100 {
+        let egraph = generate_random_egraph_tree();
+
+        egraph.to_json_file("f.json").unwrap();
+
+        let mut stats =  Stats::default();
+        let extraction = extract(&egraph, &egraph.root_eclasses, &Config::default(), u32::MAX, &mut stats);
+        extraction.check(&egraph);
+        println!("{:?}", stats);
+        
+        assert_eq!(stats.classes_before_solving, 1);
+
+    }
+}
+

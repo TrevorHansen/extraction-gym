@@ -303,3 +303,64 @@ pub fn generate_random_egraph() -> EGraph {
 
     egraph
 }
+
+pub fn generate_random_egraph_tree() -> EGraph {
+    let mut rng = rand::thread_rng();
+    let core_node_count = rng.gen_range(1..10) as usize;
+    let mut nodes: Vec<Node> = Vec::with_capacity(2*core_node_count);
+    let mut eclass = 0;
+    let mut node_id = 0;
+
+    // Create nodes
+    for _i in 0..core_node_count {
+        nodes.push(Node {
+            op: "node_".to_string() + &node_id.to_string(),
+            children: vec![],
+            eclass: eclass.to_string().clone().into(),
+            cost: generate_random_not_nan() * 100.0,
+        });
+        eclass+=1;
+        node_id+=1;
+    }
+
+    let mut working: std::collections::VecDeque<_> = std::collections::VecDeque::from(nodes.clone());
+
+    while working.len() > 1 {
+        // Select some number of them off the back.
+        let num_to_select = rng.gen_range(1..=core::cmp::min(5, working.len()));
+
+        // Make a new node with those as children.
+        let right = working.drain((working.len() - num_to_select)..);
+        let children = right.map(|n| n.op.clone().into()).collect();
+
+        if working.is_empty() || rng.gen_bool(0.2) {
+            eclass += 1;
+        }
+        else {
+            working.pop_back();
+        }
+
+        nodes.push(Node {
+            op: "node_".to_string() + &node_id.to_string(),
+            children: children,
+            eclass: eclass.to_string().clone().into(),
+            cost: generate_random_not_nan() * 100.0,
+        });
+
+        node_id+=1;
+        working.push_back(nodes.last().unwrap().clone());
+
+    }
+
+    let mut egraph = EGraph::default();
+
+    for i in 0..nodes.len() {
+        egraph.add_node(nodes[i].op.clone(), nodes[i].clone());
+    }
+
+    // Set root
+    egraph.root_eclasses.push(working.pop_back().unwrap().eclass.clone());
+    
+    return egraph;
+    }
+
