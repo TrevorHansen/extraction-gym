@@ -24,6 +24,7 @@ pub struct Config {
     pub remove_self_loops: bool,
     pub remove_high_cost_nodes: bool,
     pub remove_more_expensive_subsumed_nodes: bool,
+    pub remove_more_expensive_nodes: bool,
     pub remove_unreachable_classes: bool,
     pub pull_up_single_parent: bool,
     pub take_intersection_of_children_in_class: bool,
@@ -42,6 +43,8 @@ impl Config {
             remove_self_loops: true,
             remove_high_cost_nodes: true,
             remove_more_expensive_subsumed_nodes: true,
+            // broken:
+            remove_more_expensive_nodes: false,
             remove_unreachable_classes: true,
             pull_up_single_parent: true,
             take_intersection_of_children_in_class: true,
@@ -612,6 +615,60 @@ fn child_to_parents(vars: &IndexMap<ClassId, ClassILP>) -> IndexMap<ClassId, Ind
     child_to_parents
 }
 
+/*
+If the cost of a node, including the full cost of all it's children, is less than the cost of just the other node's (excluding its children)
+Then discard the more expensive node.
+
+* The cheapest cost doesn't use the var[] cost, it uses the cost from the egraphs. This is worse, but having dag_cost already
+built, makes this super easy to implement.
+* This can reduce the number of valid extractions - it will drop nodes that have the same cost as other nodes.
+* This currently doesn't work if the egraph contains subgraphs that are infeasible, because it calls dag_cost on those cycles (which fails.)
+*/
+
+fn remove_more_expensive_nodes(
+    vars: &mut IndexMap<ClassId, ClassILP>,
+    initial_result: &ExtractionResult,
+    egraph: &EGraph,
+    config: &Config,
+) {
+    if config.remove_more_expensive_nodes {
+        let mut removed = 0;
+        for class in vars.values_mut() {
+            let children = class.as_nodes();
+            if children.len() <= 2 {
+                continue;
+            }
+
+            let (cheapest_node, cheapest_cost) = children
+                .iter()
+                .map(|node| {
+                    let cost = initial_result.dag_cost(
+                        egraph,
+                        node.children_classes
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    ) + egraph[&node.member].cost;
+                    (node, cost)
+                })
+                .min_by_key(|&(_, cost)| cost)
+                .unwrap();
+
+            removed += children
+                .iter()
+                .filter(|e| e.cost >= cheapest_cost && (cheapest_node.member != e.member))
+                .map(|e| class.remove_node(&e.member))
+                .count();
+        }
+
+        log::info!(
+            "Removed nodes that are not cheaper than another in the same class: {}",
+            removed
+        );
+    }
+}
+
 /* If a node in a class has (a) equal or higher cost compared to another in that same class, and (b) its
   children are a subset of the other's, then it can be removed.
 */
@@ -1152,6 +1209,7 @@ mod test {
             pull_up_costs: rng.gen(),
             remove_self_loops: rng.gen(),
             remove_high_cost_nodes: rng.gen(),
+            remove_more_expensive_nodes: false,
             remove_more_expensive_subsumed_nodes: rng.gen(),
             remove_unreachable_classes: rng.gen(),
             pull_up_single_parent: rng.gen(),
@@ -1170,6 +1228,7 @@ mod test {
             pull_up_costs: false,
             remove_self_loops: false,
             remove_high_cost_nodes: false,
+            remove_more_expensive_nodes: false,
             remove_more_expensive_subsumed_nodes: false,
             remove_unreachable_classes: false,
             pull_up_single_parent: false,
